@@ -1,0 +1,18 @@
+{{#partial "content"}}
+    <h1>Courses</h1>
+
+    <ul>
+        {{#each courseList}}
+            <li><a href="/courses/{{ id }}/reviews">{{name}} at {{url}}</a></li>
+        {{/each}}
+    </ul>
+
+    <form action="/courses" method="post" onsubmit="return validateCourse();">
+        <input type="text" placeholder="course name" name="coursename" id="courseName"/>
+        <input type="text" placeholder="course url" name="courseurl"/>
+        <button>Submit</button>
+    </form>
+
+{{/partial}}
+
+{{> base.hbs}}

@@ -1,0 +1,26 @@
+{{#partial "content"}}
+    <h1>Reviews</h1>
+    <ul id = "tHeader">
+        <li>Rating</li>
+        <li>Comment</li>
+    </ul>
+    <ul id ="comment">
+        {{#each reviewList}}
+
+            <ul id ="connect">
+                <hr align="left" width="29%" color="#eaeaea" height="1px" border="0">
+               <span><li class="pad">{{rating}}</li>
+                <li class ="pad">{{comment}}</li></span>
+            </ul>
+        {{/each}}
+    </ul>
+
+    <form action="/courses/{{id}}/reviews" method="post" onsubmit="return validateReview()">
+        <input type="number" placeholder="0" name="rating" id ="ratingId">
+        <input type="text" placeholder="comment" name="comment"/>
+        <button>submit</button>
+    </form>
+
+{{/partial}}
+
+{{> base.hbs}}

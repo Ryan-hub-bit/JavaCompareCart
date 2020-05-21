@@ -1,0 +1,293 @@
+diff --git a/CompareCartsBackend/src/main/java/api/ApiServer.java b/CompareCartsBackend/src/main/java/api/ApiServer.java
+index 42bed02d..80456e81 100644
+--- a/CompareCartsBackend/src/main/java/api/ApiServer.java
++++ b/CompareCartsBackend/src/main/java/api/ApiServer.java
+@@ -15,7 +15,7 @@ import java.util.ArrayList;
+ import java.util.HashMap;
+ import java.util.List;
+ import java.util.Map;
+-
++import dao.DaoUtil;
+ public final class ApiServer {
+ 
+     public static int PORT = 9999;
+@@ -133,6 +133,8 @@ public final class ApiServer {
+                 productDao.add(product,product_detail,source);
+                 groceryListDao.addProduct(product.getUpc(), Integer.parseInt(ctx.pathParam("listID")));
+                 ctx.status(200);
++                product.getPrices();
++
+ 
+ 
+             });
+diff --git a/CompareCartsBackend/src/main/java/dao/AmazonFetch.java b/CompareCartsBackend/src/main/java/dao/AmazonFetch.java
+index 335dd4fb..5f0c19b5 100644
+--- a/CompareCartsBackend/src/main/java/dao/AmazonFetch.java
++++ b/CompareCartsBackend/src/main/java/dao/AmazonFetch.java
+@@ -6,12 +6,49 @@ import org.jsoup.nodes.Document;
+ import org.jsoup.nodes.Element;
+ import org.jsoup.select.Elements;
+ 
++import com.amazonaws.AmazonWebServiceRequest;
+ import java.io.IOException;
+ import java.util.ArrayList;
+ import java.util.List;
+ import java.util.Random;
+-
++import javax.crypto.Mac;
++import javax.crypto.spec.SecretKeySpec;
+ import static java.lang.Float.parseFloat;
++import java.util.TimeZone;
++import java.util.Date;
++import java.text.DateFormat;
++import java.text.SimpleDateFormat;
++import com.amazonaws.http.AmazonHttpClient;
++import com.amazonaws.ClientConfiguration;
++import java.net.http.HttpResponse;
++import com.amazonaws.AmazonClientException;
++import com.amazonaws.Request;
++import com.amazonaws.Response;
++import com.amazonaws.DefaultRequest;
++import com.amazonaws.auth.BasicAWSCredentials;
++import com.amazonaws.auth.AWS4Signer;
++import com.amazonaws.http.ExecutionContext;
++import com.amazonaws.AmazonWebServiceResponse;
++import com.amazonaws.http.HttpMethodName;
++import com.amazonaws.http.HttpResponseHandler;
++import com.amazonaws.http.DefaultErrorResponseHandler;
++import com.amazonaws.services.s3.internal.S3StringResponseHandler;
++import com.amazonaws.services.s3.internal.S3ErrorResponseHandler;
++import java.net.URI;
++import com.amazonaws.http.response.AwsResponseHandlerAdapter;
++import org.apache.commons.io.IOUtils;
++import java.security.InvalidKeyException;
++import java.security.NoSuchAlgorithmException;
++import java.security.SignatureException;
++import java.util.Formatter;
++
++import javax.crypto.Mac;
++import javax.crypto.spec.SecretKeySpec;
++import java.util.Base64;
++
++import javax.crypto.Mac;
++import javax.crypto.spec.SecretKeySpec;
++import java.util.Base64;
+ 
+ 
+ public class AmazonFetch {
+@@ -117,7 +154,6 @@ public class AmazonFetch {
+     }
+ 
+ 
+-    //TODO remove this function, it only served to test the Jsoup code
+     public String getPrice(Product product) throws IOException{
+         String name = product.getName();
+         List<Product> products = new ArrayList<Product>();
+@@ -170,5 +206,122 @@ public class AmazonFetch {
+ 
+ 
+     }
++
++    static byte[] HmacSHA256(String data, byte[] key) throws Exception {
++        String algorithm="HmacSHA256";
++        Mac mac = Mac.getInstance(algorithm);
++        mac.init(new SecretKeySpec(key, algorithm));
++        return mac.doFinal(data.getBytes("UTF-8"));
++    }
++
++    static byte[] getSignatureKey(String key, String dateStamp, String regionName, String serviceName) throws Exception {
++        byte[] kSecret = ("AWS4" + key).getBytes("UTF-8");
++        byte[] kDate = HmacSHA256(dateStamp, kSecret);
++        byte[] kRegion = HmacSHA256(regionName, kDate);
++        byte[] kService = HmacSHA256(serviceName, kRegion);
++        byte[] kSigning = HmacSHA256("aws4_request", kService);
++        return kSigning;
++    }
++
++    private static String getTime() {
++        TimeZone tz = TimeZone.getTimeZone("UTC");
++        DateFormat df = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss"); // Quoted "Z" to indicate UTC, no timezone offset
++        df.setTimeZone(tz);
++        return df.format(new Date());
++
++    }
++
++
++    private static final char[] HEX_ARRAY = "0123456789ABCDEF".toCharArray();
++    public static String bytesToHex(byte[] bytes) {
++        char[] hexChars = new char[bytes.length * 2];
++        for (int j = 0; j < bytes.length; j++) {
++            int v = bytes[j] & 0xFF;
++            hexChars[j * 2] = HEX_ARRAY[v >>> 4];
++            hexChars[j * 2 + 1] = HEX_ARRAY[v & 0x0F];
++        }
++        return new String(hexChars);
++    }
++
++
++    private class StringResponseHandler implements HttpResponseHandler<AmazonWebServiceResponse<String>> {
++
++        @Override
++        public AmazonWebServiceResponse<String> handle(com.amazonaws.http.HttpResponse response) throws IOException {
++
++            AmazonWebServiceResponse<String> awsResponse = new AmazonWebServiceResponse<>();
++
++            //putting response string in the result, available outside the handler
++            awsResponse.setResult((String) IOUtils.toString(response.getContent()));
++
++            return awsResponse;
++        }
++
++        @Override
++        public boolean needsConnectionLeftOpen() {
++            return false;
++        }
++
++    }
++
++    String AWSAccessKeyId = "AKIAIALGB3JFLURILGDA";
++    String AWSSecretKey= "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";
++
++    public String getUpc(String itemname) throws Exception{
++        //Instantiate the request
++        Request<Void> request = new DefaultRequest<Void>("AWSECommerceService"); //Request to ElasticSearch
++        request.setHttpMethod(HttpMethodName.GET);
++        request.setEndpoint(URI.create("http://webservices.amazon.com/onca/xml"));
++        request.withParameter("Service", "AWSECommerceService");
++        request.withParameter("Operation", "ItemSearch");
++        request.withParameter("AssociateTag", "CompareCarts-Jack");
++        request.withParameter("Availability", "Available");
++        request.withParameter("Keywords", "banana");
++        //Sign it...
++        AWS4Signer signer = new AWS4Signer();
++        signer.setRegionName("us-east-1");
++        signer.setServiceName(request.getServiceName());
++        BasicAWSCredentials cred = new BasicAWSCredentials(AWSAccessKeyId, AWSSecretKey);
++        signer.sign(request, cred);
++        System.out.println(request.getHeaders());
++        request.withParameter("Timestamp", getTime());
++        request.withParameter("Signature", request.getHeaders[Signature]);
++        request.setEndpoint(URI.create("http://webservices.amazon.com/onca/xml?Service=AWSECommerceService&Operation=ItemSearch&AssociateTag="));
++//        request.withParameter("")
++
++
++        System.out.println(request);
++        //Execute it and get the response...
++//        Response<Output> rsp =
++        Response<AmazonWebServiceResponse<String>> rsp = new AmazonHttpClient(new ClientConfiguration())
++                .requestExecutionBuilder()
++                .executionContext(new ExecutionContext(true))
++                .request(request)
++                .errorResponseHandler(new S3ErrorResponseHandler())
++                .execute(new StringResponseHandler());
++        System.out.println(rsp);
++        //Response<void> rsp = cli.requestExecutionBuilder().(new ExecutionContext(true)).request(request).execute();
++
++        //I give up. Let's try hardcoding it.
++
++        //Build the canonical request.
++        String CanonicalRequest = "GET http://webservices.amazon.com/onca/xml HTTP/1.1\n"
++                + "Host: webservices.amazon.com\n"
++                + "X-Amz-Date: 20200405T123600Z\n";
++
++//        "X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAIALGB3JFLURILGDA%2F20200404%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20130524T000000Z&X-Amz-Expires=86400&X-Amz-SignedHeaders=host"
++
++        String privateKey = "FpLtToE9Gzi3wPTLQUIhlWi5Vfcy11IIo1IS3foh";
++        String dateStamp = getTime();
++        String regionName = "us-east-1";
++        String serviceName = "AWSECommerceService";
++        byte[] signature = getSignatureKey(privateKey, dateStamp, regionName, serviceName);
++        String signature_s = bytesToHex(signature);
++        String URL = "http://webservices.amazon.com/onca/xml?Service=AWSECommerceService&Operation=ItemSearch&AWSAccessKeyId=AKIAIALGB3JFLURILGDA&AssociateTag=CompareCarts-Jack&Availability=Available&&Keywords=" + itemname + "&Signature=" + signature_s + "&Timestamp=" + getTime();
++        System.out.println(URL);
++        return "UPC fetch not yet implemented.";
++
++    }
++
+ }
+ 
+diff --git a/CompareCartsBackend/src/main/java/dao/DaoUtil.java b/CompareCartsBackend/src/main/java/dao/DaoUtil.java
+index 1e76f884..88b198ac 100644
+--- a/CompareCartsBackend/src/main/java/dao/DaoUtil.java
++++ b/CompareCartsBackend/src/main/java/dao/DaoUtil.java
+@@ -8,12 +8,17 @@ import org.json.simple.parser.ParseException;
+ 
+ import java.io.IOException;
+ import java.util.Date;
+-
++import java.util.Map;
+ public class DaoUtil {
+     private DaoUtil() {
+ 
+     }
+ 
++    public final Map<String, Integer> providerMap = Map.of(0, "Walmart", 1, "Amazon", 2, "Peapod", 3, "Wegmans");
++
++    public void indexFromProvider(String provider) {
++        return this.providerMap[provider];
++    }
+     public static void addSampleProducts(ProductDao productDao,Product_DetailsDao product_detailsDao,SourceDao sourceDao) throws InterruptedException, ParseException, IOException {
+         WalmartFetch wl = new WalmartFetch();
+         Product product = new Product("123", "LaysChips", "Food", "12 oz bbq");
+diff --git a/CompareCartsBackend/src/main/java/dao/UpcPriceDao.java b/CompareCartsBackend/src/main/java/dao/UpcPriceDao.java
+new file mode 100644
+index 00000000..e9c14893
+--- /dev/null
++++ b/CompareCartsBackend/src/main/java/dao/UpcPriceDao.java
+@@ -0,0 +1,6 @@
++package dao;
++
++public interface UpcPriceDao {
++    List<String> getPrices(String upc);
++
++}
+diff --git a/CompareCartsBackend/src/main/java/model/Product.java b/CompareCartsBackend/src/main/java/model/Product.java
+index 87e78bec..db46f234 100644
+--- a/CompareCartsBackend/src/main/java/model/Product.java
++++ b/CompareCartsBackend/src/main/java/model/Product.java
+@@ -4,6 +4,7 @@ import java.util.Objects;
+ import dao.WalmartFetch;
+ import java.util.List;
+ import java.io.IOException;
++import dao.AmazonFetch;
+ 
+ public class Product {
+     private String upc;
+@@ -60,8 +61,10 @@ public class Product {
+ 
+     public void getPrices() {
+         WalmartFetch wf = new WalmartFetch();
++        AmazonFetch af = new AmazonFetch();
+         try {
+             price_list.set(0, wf.getPrice(this));
++            price_list.set(1, af.getPrice(this));
+         }
+         catch (Exception ex) {
+             System.out.println("TODO handle exception");
+diff --git a/CompareCartsBackend/src/test/java/api/ApiServerTest.java b/CompareCartsBackend/src/test/java/api/ApiServerTest.java
+index 88bec637..7ba2ca16 100644
+--- a/CompareCartsBackend/src/test/java/api/ApiServerTest.java
++++ b/CompareCartsBackend/src/test/java/api/ApiServerTest.java
+@@ -7,6 +7,7 @@ import com.mashape.unirest.http.Unirest;
+ import com.mashape.unirest.http.exceptions.UnirestException;
+ import dao.DaoFactory;
+ import dao.WalmartFetch;
++import dao.AmazonFetch;
+ import model.GroceryList;
+ import model.Product;
+ import model.Product_Detail;
+@@ -194,5 +195,13 @@ public class ApiServerTest {
+             System.out.println("TODO exception");
+         }
+ 
++    }
++    @Test
++    public void getUpc() throws Exception{
++        AmazonFetch af = new AmazonFetch();
++        af.getUpc("banana");
++        assertEquals(1, 2);
++
++
+     }
+ }
+\ No newline at end of file
